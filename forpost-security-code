@@ -1,0 +1,451 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+╔══════════════════════════════════════════════════════════╗
+║   FORPOST SECURITY vX.0 — FREE EDITION                  ║
+║   Демонстрационная версия                                ║
+║   GitHub: https://github.com/forpost02/forpost-security ║
+╚══════════════════════════════════════════════════════════╝
+
+Бесплатная версия включает:
+  • AES-256 шифрование файлов
+  • DDoS Shield (базовый)
+  • IP Analyzer
+  • Фейк-генератор данных
+  • FPS-лицензия
+
+Установка:
+  pip install cryptography requests
+
+Запуск:
+  python forpost.py
+"""
+
+import os
+import sys
+import json
+import time
+import socket
+import base64
+import hashlib
+import random
+import threading
+import ssl
+from datetime import datetime
+
+# ============================================================
+# КОНФИГУРАЦИЯ
+# ============================================================
+WORK_DIR = os.path.expanduser("~/.forpost_security")
+os.makedirs(WORK_DIR, exist_ok=True)
+os.chdir(WORK_DIR)
+
+LICENSE_FILE = ".fps_key"
+
+# ============================================================
+# БАННЕР
+# ============================================================
+def show_banner():
+    print("""
+╔══════════════════════════════════════════════════════════╗
+║                                                          ║
+║      ███████╗ ██████╗ ██████╗ ██████╗  ██████╗ ███████╗ ║
+║      ██╔════╝██╔═══██╗██╔══██╗██╔══██╗██╔═══██╗██╔════╝ ║
+║      █████╗  ██║   ██║██████╔╝██████╔╝██║   ██║███████╗ ║
+║      ██╔══╝  ██║   ██║██╔══██╗██╔═══╝ ██║   ██║╚════██║ ║
+║      ██║     ╚██████╔╝██║  ██║██║     ╚██████╔╝███████║ ║
+║      ╚═╝      ╚═════╝ ╚═╝  ╚═╝╚═╝      ╚═════╝ ╚══════╝ ║
+║                                                          ║
+║              SECURITY FRAMEWORK vX.0                     ║
+║              FREE EDITION                                ║
+║                                                          ║
+╚══════════════════════════════════════════════════════════╝
+    """)
+
+# ============================================================
+# СИСТЕМА ЛИЦЕНЗИЙ
+# ============================================================
+def check_license():
+    """Проверяет наличие активации"""
+    if os.path.exists(LICENSE_FILE):
+        try:
+            with open(LICENSE_FILE) as f:
+                data = json.load(f)
+            return data.get("activated", False)
+        except Exception:
+            pass
+    return False
+
+def activate():
+    """Активация лицензии"""
+    print("┌─────────────────────────────────────────────────┐")
+    print("│            АКТИВАЦИЯ FORPOST SECURITY           │")
+    print("└─────────────────────────────────────────────────┘")
+    print()
+    print("Для бесплатной активации введите ключ: FPS")
+    print()
+    key = input("Ключ активации: ").strip()
+    
+    if key.upper() == "FPS":
+        with open(LICENSE_FILE, "w") as f:
+            json.dump({
+                "activated": True,
+                "date": datetime.now().isoformat(),
+                "edition": "FREE"
+            }, f)
+        print()
+        print("✅ АКТИВИРОВАНО! Добро пожаловать в FORPOST SECURITY.")
+        return True
+    else:
+        print()
+        print("❌ Неверный ключ активации.")
+        print("   Для бесплатной версии используйте: FPS")
+        return False
+
+# ============================================================
+# AES-256 ШИФРОВАНИЕ (МОДУЛЬ 1)
+# ============================================================
+try:
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.backends import default_backend
+    AES_AVAILABLE = True
+except ImportError:
+    AES_AVAILABLE = False
+    print("⚠️  Установите cryptography: pip install cryptography")
+    print()
+
+class CryptoEngine:
+    """AES-256 CBC шифрование файлов"""
+    
+    def __init__(self, password):
+        self.key = hashlib.sha256(password.encode()).digest()
+        self.backend = default_backend()
+    
+    def encrypt(self, data):
+        """Шифрует данные AES-256-CBC"""
+        iv = os.urandom(16)
+        cipher = Cipher(
+            algorithms.AES(self.key),
+            modes.CBC(iv),
+            backend=self.backend
+        ).encryptor()
+        padder = padding.PKCS7(128).padder()
+        padded = padder.update(data) + padder.finalize()
+        return iv + cipher.update(padded) + cipher.finalize()
+    
+    def decrypt(self, data):
+        """Расшифровывает данные"""
+        iv = data[:16]
+        cipher = Cipher(
+            algorithms.AES(self.key),
+            modes.CBC(iv),
+            backend=self.backend
+        ).decryptor()
+        unpadder = padding.PKCS7(128).unpadder()
+        padded = cipher.update(data[16:]) + cipher.finalize()
+        return unpadder.update(padded) + unpadder.finalize()
+    
+    def lock_file(self, filepath):
+        """Шифрует файл"""
+        if not os.path.exists(filepath):
+            print(f"❌ Файл не найден: {filepath}")
+            return False
+        
+        try:
+            with open(filepath, "rb") as f:
+                data = f.read()
+            
+            encrypted = self.encrypt(data)
+            
+            with open(filepath + ".locked", "wb") as f:
+                f.write(base64.b64encode(encrypted))
+            
+            print(f"🔒 ЗАШИФРОВАН: {filepath}")
+            print(f"   → {filepath}.locked")
+            return True
+        except Exception as e:
+            print(f"❌ Ошибка шифрования: {e}")
+            return False
+    
+    def unlock_file(self, filepath):
+        """Расшифровывает файл"""
+        if not filepath.endswith(".locked"):
+            print("❌ Файл должен заканчиваться на .locked")
+            return False
+        
+        if not os.path.exists(filepath):
+            print(f"❌ Файл не найден: {filepath}")
+            return False
+        
+        try:
+            with open(filepath, "rb") as f:
+                data = base64.b64decode(f.read())
+            
+            decrypted = self.decrypt(data)
+            original = filepath.replace(".locked", "")
+            
+            with open(original, "wb") as f:
+                f.write(decrypted)
+            
+            print(f"🔓 РАСШИФРОВАН: {original}")
+            return True
+        except Exception as e:
+            print(f"❌ Ошибка расшифровки: {e}")
+            return False
+
+# ============================================================
+# DDOS SHIELD (МОДУЛЬ 2)
+# ============================================================
+class DDoSShield:
+    """Базовый DDoS Shield с мониторингом соединений"""
+    
+    def __init__(self):
+        self.blocked = set()
+        self.counts = {}
+        self.running = False
+    
+    def start(self, duration=60):
+        """Мониторит соединения и блокирует подозрительные IP"""
+        print("┌─────────────────────────────────────────────────┐")
+        print("│         DDoS SHIELD АКТИВИРОВАН                 │")
+        print(f"│         Мониторинг: {duration} секунд                    │")
+        print("└─────────────────────────────────────────────────┘")
+        print()
+        
+        self.running = True
+        start_time = time.time()
+        
+        while time.time() - start_time < duration and self.running:
+            try:
+                with open("/proc/net/tcp", "r") as f:
+                    lines = f.readlines()[1:]
+                
+                for line in lines:
+                    parts = line.split()
+                    if len(parts) >= 8 and parts[3] == "01":
+                        try:
+                            ip_raw = bytes.fromhex(parts[2].split(":")[0])
+                            ip = socket.inet_ntoa(ip_raw[::-1])
+                            
+                            if ip in ("0.0.0.0", "127.0.0.1"):
+                                continue
+                            
+                            self.counts[ip] = self.counts.get(ip, 0) + 1
+                            
+                            if self.counts[ip] > 100 and ip not in self.blocked:
+                                self.blocked.add(ip)
+                                print(f"🚫 ЗАБЛОКИРОВАН: {ip} ({self.counts[ip]} пакетов)")
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            
+            time.sleep(1)
+        
+        print()
+        print(f"✅ Shield завершён. Заблокировано IP: {len(self.blocked)}")
+
+# ============================================================
+# IP ANALYZER (МОДУЛЬ 3)
+# ============================================================
+class IPAnalyzer:
+    """Анализ IP-адресов через API"""
+    
+    def analyze(self, ip):
+        """Получает информацию об IP"""
+        print(f"🔍 АНАЛИЗ IP: {ip}")
+        print("─" * 50)
+        
+        try:
+            from urllib.request import urlopen, Request
+            
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            
+            req = Request(
+                f"http://ip-api.com/json/{ip}",
+                headers={"User-Agent": "Forpost/1.0"}
+            )
+            response = urlopen(req, context=ctx, timeout=5)
+            data = json.loads(response.read().decode())
+            
+            print(f"   🌍 Страна:   {data.get('country', '?')}")
+            print(f"   🏙  Город:    {data.get('city', '?')}")
+            print(f"   📡 ISP:      {data.get('isp', '?')}")
+            print(f"   🏢 Орг:      {data.get('org', '?')}")
+            print(f"   🔒 Прокси:   {'ДА ⚠️' if data.get('proxy') else 'НЕТ ✅'}")
+            print(f"   🖥  Хостинг: {'ДА ⚠️' if data.get('hosting') else 'НЕТ ✅'}")
+            print(f"   🕐 Часовой:  {data.get('timezone', '?')}")
+            print("─" * 50)
+        except Exception as e:
+            print(f"   ❌ Ошибка: {e}")
+
+# ============================================================
+# ФЕЙК-ГЕНЕРАТОР (МОДУЛЬ 4)
+# ============================================================
+class FakeData:
+    """Генерирует фейковые данные для защиты от доксинга"""
+    
+    def deploy(self):
+        """Создаёт файлы с фейковыми данными"""
+        folder = "Documents"
+        os.makedirs(folder, exist_ok=True)
+        
+        # Фейковый паспорт
+        male_names = ["Алексей", "Дмитрий", "Сергей", "Андрей", "Максим"]
+        female_names = ["Анна", "Мария", "Елена", "Ольга", "Наталья"]
+        surnames_m = ["Иванов", "Петров", "Сидоров", "Кузнецов"]
+        surnames_f = ["Иванова", "Петрова", "Сидорова", "Кузнецова"]
+        
+        gender = random.choice(["M", "F"])
+        if gender == "M":
+            name = random.choice(male_names)
+            surname = random.choice(surnames_m)
+        else:
+            name = random.choice(female_names)
+            surname = random.choice(surnames_f)
+        
+        passport = f"""{surname} {name}
+Серия/Номер: {random.randint(10,99):02d} {random.randint(10,99):02d} {random.randint(100000,999999)}
+Дата рождения: {random.randint(1,28):02d}.{random.randint(1,12):02d}.{random.randint(1980,2000)}
+Адрес: г. {random.choice(['Москва', 'Санкт-Петербург', 'Казань'])}, ул. Мира, д. {random.randint(1,200)}
+"""
+        with open(os.path.join(folder, "Паспорт.txt"), "w", encoding="utf-8") as f:
+            f.write(passport)
+        
+        # Фейковая карта
+        card = f"""БАНК: {random.choice(['Сбербанк', 'ВТБ', 'Тинькофф'])}
+Номер: {random.randint(4000,4999)} {random.randint(1000,9999)} {random.randint(1000,9999)} {random.randint(1000,9999)}
+Срок: {random.randint(1,12):02d}/{random.randint(25,30)}
+CVV: {random.randint(100,999)}
+"""
+        with open(os.path.join(folder, "Банковская_карта.txt"), "w", encoding="utf-8") as f:
+            f.write(card)
+        
+        print(f"🍯 Фейковые данные созданы в папке: {folder}/")
+        print(f"   📄 Паспорт.txt")
+        print(f"   📄 Банковская_карта.txt")
+
+# ============================================================
+# ГЛАВНОЕ МЕНЮ
+# ============================================================
+def main_menu():
+    """Главное меню программы"""
+    crypto = None
+    ddos = DDoSShield()
+    ipa = IPAnalyzer()
+    fake = FakeData()
+    
+    while True:
+        print()
+        print("╔══════════════════════════════════════════════════════════╗")
+        print("║            FORPOST SECURITY — ГЛАВНОЕ МЕНЮ               ║")
+        print("╠══════════════════════════════════════════════════════════╣")
+        print("║  [1] 🔒 Зашифровать файл                                 ║")
+        print("║  [2] 🔓 Расшифровать файл                                ║")
+        print("║  [3] 🛡️  DDoS Shield (60 сек)                            ║")
+        print("║  [4] 🔍 IP Анализатор                                    ║")
+        print("║  [5] 🍯 Фейк-генератор                                   ║")
+        print("║  [6] ℹ️  О программе                                      ║")
+        print("║  [0] ❌ Выход                                             ║")
+        print("╚══════════════════════════════════════════════════════════╝")
+        
+        choice = input("Выбор: ").strip()
+        
+        try:
+            if choice == "1":
+                if not AES_AVAILABLE:
+                    print("❌ Установите cryptography: pip install cryptography")
+                    continue
+                if crypto is None:
+                    pwd = input("🔑 Мастер-пароль: ")
+                    crypto = CryptoEngine(pwd)
+                filepath = input("📁 Путь к файлу: ")
+                crypto.lock_file(filepath)
+            
+            elif choice == "2":
+                if not AES_AVAILABLE:
+                    print("❌ Установите cryptography: pip install cryptography")
+                    continue
+                if crypto is None:
+                    pwd = input("🔑 Мастер-пароль: ")
+                    crypto = CryptoEngine(pwd)
+                filepath = input("📁 Путь к .locked файлу: ")
+                crypto.unlock_file(filepath)
+            
+            elif choice == "3":
+                duration = input("⏱  Длительность в секундах (по умолчанию 60): ").strip()
+                duration = int(duration) if duration.isdigit() else 60
+                ddos.start(duration)
+            
+            elif choice == "4":
+                ip = input("🌐 Введите IP: ").strip()
+                if ip:
+                    ipa.analyze(ip)
+            
+            elif choice == "5":
+                fake.deploy()
+            
+            elif choice == "6":
+                print()
+                print("┌─────────────────────────────────────────────────┐")
+                print("│  FORPOST SECURITY vX.0 — FREE EDITION          │")
+                print("│                                                 │")
+                print("│  Компания:  ООО «Форпост»                       │")
+                print("│  Модулей:   42 (Free включает 4)                │")
+                print("│  Лицензия:  FPS (бесплатно)                     │")
+                print("│                                                 │")
+                print("│  GitHub: github.com/forpost02/forpost-security  │")
+                print("│  Email:  forpost02@proton.me                    │")
+                print("│                                                 │")
+                print("│  © 2026 ООО «Форпост»                           │")
+                print("└─────────────────────────────────────────────────┘")
+            
+            elif choice == "0":
+                print()
+                print("👋 До связи! Спасибо за использование FORPOST SECURITY.")
+                break
+            
+            else:
+                print("❌ Неверный выбор")
+        
+        except KeyboardInterrupt:
+            print()
+            print("⏸  Прервано")
+        except Exception as e:
+            print(f"❌ Ошибка: {e}")
+
+# ============================================================
+# ТОЧКА ВХОДА
+# ============================================================
+def main():
+    os.system("cls" if os.name == "nt" else "clear")
+    
+    show_banner()
+    
+    if not check_license():
+        if not activate():
+            sys.exit(1)
+        print()
+        time.sleep(1)
+    
+    if not AES_AVAILABLE:
+        print("⚠️  Для полной работы установите:")
+        print("   pip install cryptography requests")
+        print()
+        print("Программа продолжит работу в ограниченном режиме.")
+        print()
+        time.sleep(2)
+    
+    main_menu()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print()
+        print("👋 Выход")
+    except Exception as e:
+        print(f"❌ Критическая ошибка: {e}")
